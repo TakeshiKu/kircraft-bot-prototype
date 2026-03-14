@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, type ReactNode } from "react"
+import { useSearchParams } from "next/navigation"
+import { useState, useEffect, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -45,6 +46,8 @@ type Screen =
   | "post-order-shipped"
   | "post-order-rejected"
   | "post-order-payment-received"
+  | "order-detail"
+  | "order-cancel-confirm"
 
 interface Product {
   id: number
@@ -69,6 +72,23 @@ interface CartPosition {
   color: string
   hardware: string
   quantity: number
+}
+
+interface ActiveOrderItem {
+  name: string
+  price: string
+  quantity: number
+}
+
+interface ActiveOrder {
+  id: string
+  status: string
+  items: ActiveOrderItem[]
+  total: string
+  delivery?: string
+  address: string
+  addressLine2?: string
+  date?: string
 }
 
 const products: Product[] = [
@@ -154,6 +174,19 @@ export function TelegramBot() {
   const [checkoutComment, setCheckoutComment] = useState("")
   const [demoOrderId, setDemoOrderId] = useState("1024")
   const [demoMasterComment, setDemoMasterComment] = useState("Уточните, пожалуйста, желаемый цвет фурнитуры.")
+  const [activeOrder, setActiveOrder] = useState<ActiveOrder | null>(null)
+
+  const searchParams = useSearchParams()
+  useEffect(() => {
+    const step = searchParams.get("checkoutStep")
+    if (step) {
+      const stepNum = parseInt(step, 10)
+      if (stepNum >= 1 && stepNum <= 5) {
+        setScreen("checkout")
+        setCheckoutStep(stepNum)
+      }
+    }
+  }, [searchParams])
 
   const PRODUCT_PHOTOS_COUNT = 3
 
@@ -337,16 +370,28 @@ export function TelegramBot() {
                 О мастерской
               </Button>
             </div>
-            {cartItems.length > 0 && (
-              <div className="px-4 pt-1.5 pb-4">
-                <Button
-                  variant="outline"
-                  className="w-full h-11 rounded-lg flex items-center justify-center gap-2"
-                  onClick={() => setScreen("cart")}
-                >
-                  <span aria-hidden>🛒</span>
-                  <span>Корзина ({cartItems.length})</span>
-                </Button>
+            {(cartItems.length > 0 || activeOrder !== null) && (
+              <div className="px-4 pt-1.5 pb-4 flex gap-2">
+                {cartItems.length > 0 && (
+                  <Button
+                    variant="outline"
+                    className="flex-1 h-11 rounded-lg flex items-center justify-center gap-2"
+                    onClick={() => setScreen("cart")}
+                  >
+                    <span aria-hidden>🛒</span>
+                    <span>Корзина ({cartItems.length})</span>
+                  </Button>
+                )}
+                {activeOrder !== null && (
+                  <Button
+                    variant="outline"
+                    className={cartItems.length > 0 ? "flex-1 h-11 rounded-lg flex items-center justify-center gap-2" : "w-full h-11 rounded-lg flex items-center justify-center gap-2"}
+                    onClick={() => setScreen("order-detail")}
+                  >
+                    <span aria-hidden>📦</span>
+                    <span>Мои заказы (1)</span>
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -362,7 +407,23 @@ export function TelegramBot() {
                 <Button variant="outline" className="w-full h-11 justify-start rounded-lg" onClick={() => setScreen("post-order-new")}>
                   Новый заказ у мастера
                 </Button>
-                <Button variant="outline" className="w-full h-11 justify-start rounded-lg" onClick={() => setScreen("post-order-confirmed")}>
+                <Button
+                  variant="outline"
+                  className="w-full h-11 justify-start rounded-lg"
+                  onClick={() => {
+                    setActiveOrder({
+                      id: demoOrderId,
+                      status: "Подтвержден",
+                      items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
+                      total: "8 900 ₽",
+                      delivery: "—",
+                      address: "Москва",
+                      addressLine2: "ул. Примерная, д. 1, кв. 10",
+                      date: "14 марта 2026",
+                    })
+                    setScreen("post-order-confirmed")
+                  }}
+                >
                   Заказ подтверждён
                 </Button>
                 <Button variant="outline" className="w-full h-11 justify-start rounded-lg" onClick={() => setScreen("post-order-clarification")}>
@@ -377,7 +438,25 @@ export function TelegramBot() {
                 <Button variant="outline" className="w-full h-11 justify-start rounded-lg" onClick={() => setScreen("post-order-rejected")}>
                   Заказ отклонён
                 </Button>
-                <Button variant="outline" className="w-full h-11 justify-start rounded-lg" onClick={() => setScreen("post-order-payment-received")}>
+                <Button
+                  variant="outline"
+                  className="w-full h-11 justify-start rounded-lg"
+                  onClick={() => {
+                    if (!activeOrder) {
+                      setActiveOrder({
+                        id: demoOrderId,
+                        status: "Оплачен",
+                        items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
+                        total: "8 900 ₽",
+                        delivery: "—",
+                        address: "Москва",
+                        addressLine2: "ул. Примерная, д. 1, кв. 10",
+                        date: "14 марта 2026",
+                      })
+                    }
+                    setScreen("post-order-payment-received")
+                  }}
+                >
                   Оплата получена
                 </Button>
               </div>
@@ -413,7 +492,22 @@ export function TelegramBot() {
               <p className="text-base font-bold text-foreground mt-3 pt-2 border-t border-border">Итого: 13 400 ₽</p>
             </div>
             <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
-              <Button className="w-full h-11 rounded-lg" onClick={() => setScreen("post-order-confirmed")}>
+              <Button
+                className="w-full h-11 rounded-lg"
+                onClick={() => {
+                  setActiveOrder({
+                    id: demoOrderId,
+                    status: "Подтвержден",
+                    items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }, { name: "Тонкий картхолдер", price: "4 500 ₽", quantity: 1 }],
+                    total: "13 400 ₽",
+                    delivery: "—",
+                    address: "Москва",
+                    addressLine2: "ул. Примерная, д. 1, кв. 10",
+                    date: "14 марта 2026",
+                  })
+                  setScreen("post-order-confirmed")
+                }}
+              >
                 Подтвердить заказ
               </Button>
               <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("post-order-clarification")}>
@@ -429,7 +523,21 @@ export function TelegramBot() {
           </div>
         )
 
-      case "post-order-confirmed":
+      case "post-order-confirmed": {
+        const goToPayment = () => {
+          setActiveOrder({
+            id: demoOrderId,
+            status: "Оплачен",
+            items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
+            total: "8 900 ₽",
+            delivery: "—",
+            address: "Москва",
+            addressLine2: "ул. Примерная, д. 1, кв. 10",
+            date: "14 марта 2026",
+          })
+          setScreen("post-order-payment-received")
+        }
+        const canCancel = !activeOrder || activeOrder.status === "Подтвержден" || activeOrder.status === "Ожидает подтверждения"
         return (
           <div className="flex flex-col h-full min-h-0">
             <div className="flex-1 p-4 overflow-auto min-h-0">
@@ -437,15 +545,44 @@ export function TelegramBot() {
               <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{demoOrderId}</p>
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>Мастер подтвердил ваш заказ.</p>
-                <p>Следующий шаг — оплата. Перейдите к оплате, когда будете готовы.</p>
+                <p>Следующий шаг — оплата.</p>
               </div>
             </div>
             <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
-              <Button className="w-full h-11 rounded-lg" onClick={() => setScreen("main-menu")}>
+              <Button className="w-full h-11 rounded-lg" onClick={goToPayment}>
                 Перейти к оплате
               </Button>
-              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("main-menu")}>
-                Главное меню
+              {canCancel && (
+                <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("order-cancel-confirm")}>
+                  Отменить заказ
+                </Button>
+              )}
+            </div>
+          </div>
+        )
+      }
+
+      case "order-cancel-confirm":
+        return (
+          <div className="flex flex-col h-full min-h-0">
+            <div className="flex-1 p-4 overflow-auto min-h-0 flex items-center justify-center">
+              <p className="text-sm text-foreground text-center">
+                Вы уверены, что хотите отменить заказ?
+              </p>
+            </div>
+            <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
+              <Button
+                variant="outline"
+                className="w-full h-11 rounded-lg"
+                onClick={() => {
+                  setActiveOrder(null)
+                  setScreen("main-menu")
+                }}
+              >
+                Отменить заказ
+              </Button>
+              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("post-order-confirmed")}>
+                Вернуться
               </Button>
             </div>
           </div>
@@ -535,19 +672,87 @@ export function TelegramBot() {
           <div className="flex flex-col h-full min-h-0">
             <div className="flex-1 p-4 overflow-auto min-h-0">
               <h3 className="text-base font-semibold text-foreground">Оплата получена</h3>
-              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{demoOrderId}</p>
+              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{activeOrder?.id ?? demoOrderId}</p>
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>Мы получили ваш платеж.</p>
                 <p>Заказ передан мастеру и будет изготовлен в ближайшее время.</p>
               </div>
             </div>
-            <div className="p-4 pt-2 shrink-0 border-t border-border">
+            <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
+              <Button className="w-full h-11 rounded-lg" onClick={() => setScreen("order-detail")}>
+                Посмотреть заказ
+              </Button>
               <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("main-menu")}>
                 Главное меню
               </Button>
             </div>
           </div>
         )
+
+      case "order-detail": {
+        const order = activeOrder
+        if (!order) {
+          return (
+            <div className="flex flex-col h-full min-h-0">
+              <div className="flex-1 p-4 overflow-auto min-h-0">
+                <p className="text-sm text-muted-foreground">Нет данных о заказе.</p>
+              </div>
+              <div className="p-4 pt-2 shrink-0 border-t border-border">
+                <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("main-menu")}>
+                  Главное меню
+                </Button>
+              </div>
+            </div>
+          )
+        }
+        const itemsTotal = order.items.reduce(
+          (sum, item) => sum + parsePrice(item.price) * item.quantity,
+          0
+        )
+        const itemsTotalFormatted = itemsTotal.toLocaleString("ru-RU")
+        return (
+          <div className="flex flex-col h-full min-h-0">
+            <div className="flex-1 p-4 overflow-auto min-h-0">
+              <h3 className="text-base font-semibold text-foreground">Заказ #{order.id}</h3>
+              {order.date && <p className="text-xs text-muted-foreground mt-1">от {order.date}</p>}
+              <p className="text-sm text-foreground mt-2 mb-3">Статус: {order.status}</p>
+              <div className="space-y-3 text-sm border-t border-border pt-3">
+                <div>
+                  <p className="font-medium text-foreground mb-1">Состав заказа</p>
+                  <ul className="text-muted-foreground space-y-0.5">
+                    {order.items.map((item, i) => (
+                      <li key={i}>{item.name} {"\u00D7"}{item.quantity} — {item.price}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <p className="font-medium text-foreground mb-1.5">Стоимость</p>
+                  <div className="space-y-0.5">
+                    <p className="text-foreground">Товары: {itemsTotalFormatted} ₽</p>
+                    <p className="text-foreground">Доставка: {order.delivery ?? "—"}</p>
+                    <p className="text-foreground font-medium">Итого: {order.total}</p>
+                  </div>
+                </div>
+                <div className="pt-1">
+                  <p className="font-medium text-foreground mb-0.5">Адрес доставки</p>
+                  <div className="text-muted-foreground space-y-0.5 leading-tight">
+                    <p>{order.address}</p>
+                    {order.addressLine2 && <p>{order.addressLine2}</p>}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
+              <Button variant="outline" className="w-full h-11 rounded-lg">
+                Написать мастеру
+              </Button>
+              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("main-menu")}>
+                Главное меню
+              </Button>
+            </div>
+          </div>
+        )
+      }
 
       case "cart": {
         const cartTotal = cartItems.reduce(
@@ -597,19 +802,11 @@ export function TelegramBot() {
                             </Button>
                           </div>
                         </div>
-                        <div className="flex gap-2 mt-3">
+                        <div className="mt-3">
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-9 flex-1 rounded-lg text-sm"
-                            onClick={() => editCartItem(pos, i)}
-                          >
-                            Изменить
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-9 flex-1 rounded-lg text-sm"
+                            className="h-9 w-1/2 rounded-lg text-sm"
                             onClick={() => removeCartItem(i)}
                           >
                             Удалить
@@ -736,7 +933,7 @@ export function TelegramBot() {
                   className="h-11 rounded-lg"
                 />
                 <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setCheckoutPhone("+7 999 123-45-67")}>
-                  Поделиться номером
+                  Автозаполнить номер
                 </Button>
               </div>
             </div>,
@@ -781,6 +978,11 @@ export function TelegramBot() {
                   className="h-11 rounded-lg"
                 />
               </div>
+              <p className="text-xs text-muted-foreground pt-1">
+                Стоимость доставки рассчитывается после оформления заказа.
+                <br />
+                Обычно около 400–600 ₽ в зависимости от города.
+              </p>
             </div>,
             <>
               <Button className="w-full h-11 rounded-lg" onClick={() => setCheckoutStep(4)}>
@@ -804,11 +1006,26 @@ export function TelegramBot() {
                 <p className="text-foreground">Адрес — {checkoutAddress || "—"}</p>
                 {checkoutComment ? <p className="text-foreground">Комментарий — {checkoutComment}</p> : null}
               </div>
-              <p className="text-base font-bold text-foreground pt-2 border-t border-border">
-                Итого: {checkoutTotalFormatted} ₽
-              </p>
+              <div className="pt-2 border-t border-border space-y-1">
+                <p className="text-base font-bold text-foreground">
+                  Товары: {checkoutTotalFormatted} ₽
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Доставка: рассчитывается отдельно
+                </p>
+              </div>
             </div>,
             <>
+              <p className="text-xs text-muted-foreground">
+                Подтверждая заказ, вы соглашаетесь с обработкой персональных данных в соответствии с{" "}
+                <a
+                  href={`/privacy-policy?returnTo=${encodeURIComponent("/?checkoutStep=4")}`}
+                  className="underline underline-offset-2 text-primary hover:text-primary/90"
+                >
+                  Политикой обработки персональных данных
+                </a>
+                .
+              </p>
               <Button className="w-full h-11 rounded-lg" onClick={submitCheckoutOrder}>
                 Подтвердить заказ
               </Button>
@@ -823,6 +1040,7 @@ export function TelegramBot() {
           <div className="space-y-3 text-sm text-muted-foreground">
             <p>Мы передали заказ мастеру на подтверждение.</p>
             <p>После подтверждения с вами свяжутся для уточнения деталей и оплаты.</p>
+            <p className="text-xs">Стоимость доставки будет рассчитана после обработки заказа.</p>
             <p className="text-xs">Обычно это занимает до одного рабочего дня.</p>
           </div>,
           <>
