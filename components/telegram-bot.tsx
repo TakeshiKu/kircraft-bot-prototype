@@ -1,6 +1,5 @@
 "use client"
 
-import { useSearchParams } from "next/navigation"
 import { useState, useEffect, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -192,9 +191,10 @@ export function TelegramBot() {
   const [demoMasterComment, setDemoMasterComment] = useState("Уточните, пожалуйста, желаемый цвет фурнитуры.")
   const [activeOrder, setActiveOrder] = useState<ActiveOrder | null>(null)
 
-  const searchParams = useSearchParams()
   useEffect(() => {
-    const step = searchParams.get("checkoutStep")
+    if (typeof window === "undefined") return
+    const params = new URLSearchParams(window.location.search)
+    const step = params.get("checkoutStep")
     if (step) {
       const stepNum = parseInt(step, 10)
       if (stepNum >= 1 && stepNum <= 5) {
@@ -202,7 +202,7 @@ export function TelegramBot() {
         setCheckoutStep(stepNum)
       }
     }
-  }, [searchParams])
+  }, [])
 
   const PRODUCT_PHOTOS_COUNT = 3
 
