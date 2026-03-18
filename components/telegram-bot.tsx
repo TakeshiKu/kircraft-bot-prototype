@@ -2,6 +2,7 @@
 
 import { useState, useEffect, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
+import { mockCdekGetPickupPointsAndQuotes, type CdekPickupPointQuote } from "@/lib/cdek"
 import {
   Dialog,
   DialogContent,
@@ -9,7 +10,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { ChevronLeft, ChevronRight, Send, MoreHorizontal, Minus, Plus } from "lucide-react"
+import { Check, ChevronLeft, ChevronRight, Send, MoreHorizontal, Minus, Plus } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -39,7 +40,7 @@ type Screen =
   | "checkout"
   | "post-order-demo"
   | "post-order-new"
-  | "post-order-confirmed"
+  | "post-order-awaiting-payment"
   | "post-order-clarification"
   | "post-order-in-progress"
   | "post-order-shipped"
@@ -88,6 +89,11 @@ interface ActiveOrder {
   items: ActiveOrderItem[]
   total: string
   delivery?: string
+  deliveryCost?: number
+  deliveryEta?: string
+  deliveryMethod?: string
+  pickupPointName?: string
+  pickupPointAddress?: string
   address: string
   addressLine2?: string
   date?: string
@@ -95,11 +101,11 @@ interface ActiveOrder {
 
 const ORDER_STATUS_LABELS: Record<string, string> = {
   CREATED: "Новый заказ",
-  CONFIRMED: "Заказ подтвержден",
   PAID: "Оплата получена",
   IN_PRODUCTION: "Заказ в работе",
   SHIPPED: "Заказ отправлен",
   CANCELLED: "Заказ отменен",
+  "Ожидает оплаты": "Ожидает оплаты",
 }
 
 function getOrderStatusLabel(status: string): string {
@@ -185,7 +191,9 @@ export function TelegramBot() {
   const [checkoutName, setCheckoutName] = useState("")
   const [checkoutPhone, setCheckoutPhone] = useState("")
   const [checkoutCity, setCheckoutCity] = useState("")
-  const [checkoutAddress, setCheckoutAddress] = useState("")
+  const [checkoutPickupPointId, setCheckoutPickupPointId] = useState("")
+  const [checkoutPickupPointOptions, setCheckoutPickupPointOptions] = useState<CdekPickupPointQuote[]>([])
+  const [checkoutDeliveryError, setCheckoutDeliveryError] = useState("")
   const [checkoutComment, setCheckoutComment] = useState("")
   const [demoOrderId, setDemoOrderId] = useState("1024")
   const [demoMasterComment, setDemoMasterComment] = useState("Уточните, пожалуйста, желаемый цвет фурнитуры.")
@@ -203,6 +211,22 @@ export function TelegramBot() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    const city = checkoutCity.trim()
+    if (!city) {
+      setCheckoutPickupPointOptions([])
+      setCheckoutPickupPointId("")
+      setCheckoutDeliveryError("")
+      return
+    }
+
+    // В прототипе: мок-ответ СДЭК, имитирующий получение ставок и списка ПВЗ.
+    const quotes = mockCdekGetPickupPointsAndQuotes(city)
+    setCheckoutPickupPointOptions(quotes)
+    setCheckoutPickupPointId("")
+    setCheckoutDeliveryError("")
+  }, [checkoutCity])
 
   const PRODUCT_PHOTOS_COUNT = 3
 
@@ -275,15 +299,50 @@ export function TelegramBot() {
     setScreen("checkout")
   }
   const submitCheckoutOrder = () => {
+    const selectedQuote = checkoutPickupPointOptions.find((q) => q.pvz.id === checkoutPickupPointId) ?? null
+    if (!selectedQuote) {
+      setCheckoutDeliveryError("Выберите ПВЗ.")
+      setCheckoutStep(3)
+      return
+    }
+
+    const itemsTotal = cartItems.reduce(
+      (sum, pos) => sum + parsePrice(pos.product.price) * (pos.quantity ?? 1),
+      0
+    )
+    const total = itemsTotal + selectedQuote.cost
+
+    setActiveOrder({
+      id: demoOrderId,
+      status: "Ожидает оплаты",
+      items: cartItems.map((pos) => ({
+        name: pos.product.name,
+        price: pos.product.price,
+        quantity: pos.quantity ?? 1,
+      })),
+      total: `${total.toLocaleString("ru-RU")} ₽`,
+      delivery: `${selectedQuote.cost.toLocaleString("ru-RU")} ₽, срок ${selectedQuote.eta}`,
+      deliveryCost: selectedQuote.cost,
+      deliveryEta: selectedQuote.eta,
+      deliveryMethod: "СДЭК",
+      pickupPointName: selectedQuote.pvz.name,
+      pickupPointAddress: selectedQuote.pvz.address,
+      address: checkoutCity,
+      addressLine2: selectedQuote.pvz.address,
+      date: new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }),
+    })
+
     setCartItems([])
-    setCheckoutStep(5)
+    setScreen("post-order-awaiting-payment")
   }
   const resetCheckoutAndReturn = () => {
     setCheckoutStep(1)
     setCheckoutName("")
     setCheckoutPhone("")
     setCheckoutCity("")
-    setCheckoutAddress("")
+    setCheckoutPickupPointId("")
+    setCheckoutPickupPointOptions([])
+    setCheckoutDeliveryError("")
     setCheckoutComment("")
     setScreen("main-menu")
   }
@@ -426,20 +485,32 @@ export function TelegramBot() {
                   variant="outline"
                   className="w-full h-11 justify-start rounded-lg"
                   onClick={() => {
+                    if (activeOrder) {
+                      setActiveOrder({ ...activeOrder, status: "Ожидает оплаты" })
+                      setScreen("post-order-awaiting-payment")
+                      return
+                    }
+                    const demoQuote = mockCdekGetPickupPointsAndQuotes("Москва")[0]
+                    if (!demoQuote) return
                     setActiveOrder({
                       id: demoOrderId,
-                      status: "CONFIRMED",
+                      status: "Ожидает оплаты",
                       items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
-                      total: "8 900 ₽",
-                      delivery: "—",
+                      total: `${(8900 + demoQuote.cost).toLocaleString("ru-RU")} ₽`,
+                      delivery: `${demoQuote.cost.toLocaleString("ru-RU")} ₽, срок ${demoQuote.eta}`,
+                      deliveryCost: demoQuote.cost,
+                      deliveryEta: demoQuote.eta,
+                      deliveryMethod: "СДЭК",
+                      pickupPointName: demoQuote.pvz.name,
+                      pickupPointAddress: demoQuote.pvz.address,
                       address: "Москва",
-                      addressLine2: "ул. Примерная, д. 1, кв. 10",
+                      addressLine2: demoQuote.pvz.address,
                       date: "14 марта 2026",
                     })
-                    setScreen("post-order-confirmed")
+                    setScreen("post-order-awaiting-payment")
                   }}
                 >
-                  Заказ подтверждён
+                  Ожидает оплаты
                 </Button>
                 <Button variant="outline" className="w-full h-11 justify-start rounded-lg" onClick={() => setScreen("post-order-clarification")}>
                   Требуется уточнение
@@ -457,18 +528,29 @@ export function TelegramBot() {
                   variant="outline"
                   className="w-full h-11 justify-start rounded-lg"
                   onClick={() => {
-                    if (!activeOrder) {
-                      setActiveOrder({
-                        id: demoOrderId,
-                        status: "PAID",
-                        items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
-                        total: "8 900 ₽",
-                        delivery: "—",
-                        address: "Москва",
-                        addressLine2: "ул. Примерная, д. 1, кв. 10",
-                        date: "14 марта 2026",
-                      })
+                    const demoQuote = mockCdekGetPickupPointsAndQuotes("Москва")[0]
+                    if (!demoQuote) return
+                    if (activeOrder) {
+                      setActiveOrder({ ...activeOrder, status: "PAID" })
+                      setScreen("post-order-payment-received")
+                      return
                     }
+
+                    setActiveOrder({
+                      id: demoOrderId,
+                      status: "PAID",
+                      items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
+                      total: `${(8900 + demoQuote.cost).toLocaleString("ru-RU")} ₽`,
+                      delivery: `${demoQuote.cost.toLocaleString("ru-RU")} ₽, срок ${demoQuote.eta}`,
+                      deliveryCost: demoQuote.cost,
+                      deliveryEta: demoQuote.eta,
+                      deliveryMethod: "СДЭК",
+                      pickupPointName: demoQuote.pvz.name,
+                      pickupPointAddress: demoQuote.pvz.address,
+                      address: "Москва",
+                      addressLine2: demoQuote.pvz.address,
+                      date: "14 марта 2026",
+                    })
                     setScreen("post-order-payment-received")
                   }}
                 >
@@ -490,18 +572,29 @@ export function TelegramBot() {
                   variant="outline"
                   className="w-full h-11 justify-start rounded-lg"
                   onClick={() => {
-                    if (!activeOrder || activeOrder.status !== "PAID") {
-                      setActiveOrder({
-                        id: demoOrderId,
-                        status: "PAID",
-                        items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
-                        total: "8 900 ₽",
-                        delivery: "—",
-                        address: "Москва",
-                        addressLine2: "ул. Примерная, д. 1, кв. 10",
-                        date: "14 марта 2026",
-                      })
+                    const demoQuote = mockCdekGetPickupPointsAndQuotes("Москва")[0]
+                    if (!demoQuote) return
+                    if (activeOrder) {
+                      setActiveOrder({ ...activeOrder, status: "PAID" })
+                      setScreen("master-order-paid")
+                      return
                     }
+
+                    setActiveOrder({
+                      id: demoOrderId,
+                      status: "PAID",
+                      items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
+                      total: `${(8900 + demoQuote.cost).toLocaleString("ru-RU")} ₽`,
+                      delivery: `${demoQuote.cost.toLocaleString("ru-RU")} ₽, срок ${demoQuote.eta}`,
+                      deliveryCost: demoQuote.cost,
+                      deliveryEta: demoQuote.eta,
+                      deliveryMethod: "СДЭК",
+                      pickupPointName: demoQuote.pvz.name,
+                      pickupPointAddress: demoQuote.pvz.address,
+                      address: "Москва",
+                      addressLine2: demoQuote.pvz.address,
+                      date: "14 марта 2026",
+                    })
                     setScreen("master-order-paid")
                   }}
                 >
@@ -517,7 +610,24 @@ export function TelegramBot() {
           </div>
         )
 
-      case "post-order-new":
+      case "post-order-new": {
+        const demoQuote = mockCdekGetPickupPointsAndQuotes("Москва")[0]
+        const demoDeliveryCost = demoQuote?.cost ?? 0
+        const demoDeliveryEta = demoQuote?.eta ?? "уточняется"
+        const demoPvzName = demoQuote?.pvz.name ?? "уточняется"
+        const demoPvzAddress = demoQuote?.pvz.address ?? "уточняется"
+        const itemsTotal = 13400
+        const demoItems: ActiveOrderItem[] = [
+          { name: "Классический бумажник", price: "8 900 ₽", quantity: 1 },
+          { name: "Тонкий картхолдер", price: "4 500 ₽", quantity: 1 },
+        ]
+        const orderItems = activeOrder?.items ?? demoItems
+        const deliveryCost = activeOrder?.deliveryCost ?? demoDeliveryCost
+        const deliveryEta = activeOrder?.deliveryEta ?? demoDeliveryEta
+        const pvzName = activeOrder?.pickupPointName ?? demoPvzName
+        const pvzAddress = activeOrder?.pickupPointAddress ?? demoPvzAddress
+        const total = activeOrder?.total ?? `${(itemsTotal + deliveryCost).toLocaleString("ru-RU")} ₽`
+
         return (
           <div className="flex flex-col h-full min-h-0">
             <div className="flex-1 p-4 overflow-auto min-h-0">
@@ -527,17 +637,22 @@ export function TelegramBot() {
                 <p className="text-foreground font-medium">Иван Петров</p>
                 <p className="text-muted-foreground">Телефон — +7 999 123-45-67</p>
                 <p className="text-muted-foreground">Город — Москва</p>
-                <p className="text-muted-foreground">Адрес — ул. Примерная, д. 1, кв. 10</p>
+                <p className="text-muted-foreground">ПВЗ — {pvzName}</p>
+                <p className="text-muted-foreground text-xs">{pvzAddress}</p>
+                <p className="text-muted-foreground">
+                  Доставка: {deliveryCost.toLocaleString("ru-RU")} ₽ • {deliveryEta}
+                </p>
                 <p className="text-muted-foreground">Комментарий — Позвонить перед доставкой</p>
               </div>
               <div className="mt-4 pt-3 border-t border-border space-y-2 text-sm">
                 <p className="text-foreground font-medium">Товары</p>
-                <p className="text-foreground">Классический бумажник × 1 — 8 900 ₽</p>
-                <p className="text-xs text-muted-foreground">Цвет кожи — Бордовый, Фурнитура — Латунь</p>
-                <p className="text-foreground">Тонкий картхолдер × 1 — 4 500 ₽</p>
-                <p className="text-xs text-muted-foreground">Цвет кожи — Чёрный, Фурнитура — Латунь</p>
+                {orderItems.map((it, i) => (
+                  <p key={i} className="text-foreground">
+                    {it.name} × {it.quantity} — {it.price}
+                  </p>
+                ))}
               </div>
-              <p className="text-base font-bold text-foreground mt-3 pt-2 border-t border-border">Итого: 13 400 ₽</p>
+              <p className="text-base font-bold text-foreground mt-3 pt-2 border-t border-border">Итого: {total}</p>
             </div>
             <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
               <Button
@@ -545,15 +660,20 @@ export function TelegramBot() {
                 onClick={() => {
                   setActiveOrder({
                     id: demoOrderId,
-                    status: "CONFIRMED",
-                    items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }, { name: "Тонкий картхолдер", price: "4 500 ₽", quantity: 1 }],
-                    total: "13 400 ₽",
-                    delivery: "—",
+                    status: "Ожидает оплаты",
+                    items: orderItems,
+                    total,
+                    delivery: `${deliveryCost.toLocaleString("ru-RU")} ₽, срок ${deliveryEta}`,
+                    deliveryCost,
+                    deliveryEta,
+                    deliveryMethod: "СДЭК",
+                    pickupPointName: pvzName,
+                    pickupPointAddress: pvzAddress,
                     address: "Москва",
-                    addressLine2: "ул. Примерная, д. 1, кв. 10",
+                    addressLine2: pvzAddress,
                     date: "14 марта 2026",
                   })
-                  setScreen("post-order-confirmed")
+                  setScreen("post-order-awaiting-payment")
                 }}
               >
                 Подтвердить заказ
@@ -570,41 +690,55 @@ export function TelegramBot() {
             </div>
           </div>
         )
+      }
 
-      case "post-order-confirmed": {
+      case "post-order-awaiting-payment": {
         const goToPayment = () => {
+          if (activeOrder) {
+            setActiveOrder({ ...activeOrder, status: "PAID" })
+            setScreen("post-order-payment-received")
+            return
+          }
+
+          const demoQuote = mockCdekGetPickupPointsAndQuotes("Москва")[0]
+          if (!demoQuote) return
+
           setActiveOrder({
             id: demoOrderId,
             status: "PAID",
             items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
-            total: "8 900 ₽",
-            delivery: "—",
+            total: `${(8900 + demoQuote.cost).toLocaleString("ru-RU")} ₽`,
+            delivery: `${demoQuote.cost.toLocaleString("ru-RU")} ₽, срок ${demoQuote.eta}`,
+            deliveryCost: demoQuote.cost,
+            deliveryEta: demoQuote.eta,
+            deliveryMethod: "СДЭК",
+            pickupPointName: demoQuote.pvz.name,
+            pickupPointAddress: demoQuote.pvz.address,
             address: "Москва",
-            addressLine2: "ул. Примерная, д. 1, кв. 10",
+            addressLine2: demoQuote.pvz.address,
             date: "14 марта 2026",
           })
           setScreen("post-order-payment-received")
         }
-        const canCancel = !activeOrder || activeOrder.status === "CONFIRMED" || activeOrder.status === "Подтвержден" || activeOrder.status === "Ожидает подтверждения"
+
+        const orderId = activeOrder?.id ?? demoOrderId
+        const total = activeOrder?.total ?? "—"
         return (
           <div className="flex flex-col h-full min-h-0">
             <div className="flex-1 p-4 overflow-auto min-h-0">
-              <h3 className="text-base font-semibold text-foreground">Заказ подтверждён</h3>
-              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{demoOrderId}</p>
+              <h3 className="text-base font-semibold text-foreground">Ожидает оплаты</h3>
+              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{orderId}</p>
               <div className="space-y-3 text-sm text-muted-foreground">
-                <p>Заказ подтвержден.</p>
-                <p>Следующий шаг — оплата.</p>
+                <p className="text-foreground font-medium">Итого: {total}</p>
               </div>
             </div>
             <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
               <Button className="w-full h-11 rounded-lg" onClick={goToPayment}>
                 Перейти к оплате
               </Button>
-              {canCancel && (
-                <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("order-cancel-confirm")}>
-                  Отменить заказ
-                </Button>
-              )}
+              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("order-cancel-confirm")}>
+                Отменить заказ
+              </Button>
             </div>
           </div>
         )
@@ -629,7 +763,7 @@ export function TelegramBot() {
               >
                 Отменить заказ
               </Button>
-              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("post-order-confirmed")}>
+              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("post-order-awaiting-payment")}>
                 Вернуться
               </Button>
             </div>
@@ -637,6 +771,11 @@ export function TelegramBot() {
         )
 
       case "master-order-paid": {
+        const demoQuote = mockCdekGetPickupPointsAndQuotes("Москва")[0]
+        const safeEta = demoQuote?.eta ?? "2-4 дня"
+        const safeCost = demoQuote?.cost ?? 0
+        const safePvzName = demoQuote?.pvz.name ?? "ПВЗ СДЭК"
+        const safePvzAddress = demoQuote?.pvz.address ?? "г. Москва, адрес ПВЗ"
         const order =
           activeOrder?.status === "PAID"
             ? activeOrder
@@ -644,10 +783,15 @@ export function TelegramBot() {
                 id: demoOrderId,
                 status: "PAID" as const,
                 items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
-                total: "8 900 ₽",
-                delivery: "—",
+                total: `${(8900 + safeCost).toLocaleString("ru-RU")} ₽`,
+                delivery: `${safeCost.toLocaleString("ru-RU")} ₽, срок ${safeEta}`,
+                deliveryCost: safeCost,
+                deliveryEta: safeEta,
+                deliveryMethod: "СДЭК",
+                pickupPointName: safePvzName,
+                pickupPointAddress: safePvzAddress,
                 address: "Москва",
-                addressLine2: "ул. Примерная, д. 1, кв. 10",
+                addressLine2: safePvzAddress,
                 date: "14 марта 2026",
               }
         return (
@@ -666,9 +810,17 @@ export function TelegramBot() {
                   </ul>
                 </div>
                 <div>
-                  <p className="font-medium text-foreground mb-0.5">Адрес доставки</p>
-                  <p className="text-muted-foreground">{order.address}</p>
-                  {order.addressLine2 && <p className="text-muted-foreground">{order.addressLine2}</p>}
+                  <p className="font-medium text-foreground mb-0.5">Доставка: СДЭК, ПВЗ</p>
+                  <p className="text-muted-foreground">{order.pickupPointName ?? "уточняется"}</p>
+                  {(order.pickupPointAddress ?? order.addressLine2) ? (
+                    <p className="text-muted-foreground text-xs">{order.pickupPointAddress ?? order.addressLine2}</p>
+                  ) : null}
+                  {order.deliveryCost !== undefined ? (
+                    <p className="text-muted-foreground text-xs mt-1">
+                      Стоимость доставки: {order.deliveryCost.toLocaleString("ru-RU")} ₽ • Срок: {order.deliveryEta ?? "уточняется"}
+                    </p>
+                  ) : null}
+                  <p className="text-foreground font-medium mt-1">Итого: {order.total}</p>
                 </div>
               </div>
             </div>
@@ -691,14 +843,24 @@ export function TelegramBot() {
       }
 
       case "master-order-in-production": {
+        const demoQuote = mockCdekGetPickupPointsAndQuotes("Москва")[0]
+        const safeEta = demoQuote?.eta ?? "2-4 дня"
+        const safeCost = demoQuote?.cost ?? 0
+        const safePvzName = demoQuote?.pvz.name ?? "ПВЗ СДЭК"
+        const safePvzAddress = demoQuote?.pvz.address ?? "г. Москва, адрес ПВЗ"
         const order = activeOrder ?? {
           id: demoOrderId,
           status: "IN_PRODUCTION",
           items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
-          total: "8 900 ₽",
-          delivery: "—",
+          total: `${(8900 + safeCost).toLocaleString("ru-RU")} ₽`,
+          delivery: `${safeCost.toLocaleString("ru-RU")} ₽, срок ${safeEta}`,
+          deliveryCost: safeCost,
+          deliveryEta: safeEta,
+          deliveryMethod: "СДЭК",
+          pickupPointName: safePvzName,
+          pickupPointAddress: safePvzAddress,
           address: "Москва",
-          addressLine2: "ул. Примерная, д. 1, кв. 10",
+          addressLine2: safePvzAddress,
           date: "14 марта 2026",
         }
         return (
@@ -715,7 +877,20 @@ export function TelegramBot() {
                     ))}
                   </ul>
                 </div>
-                <p className="text-foreground"><span className="font-medium">Адрес доставки:</span> {order.address}{order.addressLine2 ? `, ${order.addressLine2}` : ""}</p>
+                <div className="space-y-1">
+                  <p className="text-foreground">
+                    <span className="font-medium">Доставка: СДЭК, ПВЗ:</span> {order.pickupPointName ?? "уточняется"}
+                  </p>
+                  {(order.pickupPointAddress ?? order.addressLine2) ? (
+                    <p className="text-muted-foreground text-xs">{order.pickupPointAddress ?? order.addressLine2}</p>
+                  ) : null}
+                  {order.deliveryCost !== undefined ? (
+                    <p className="text-muted-foreground text-xs">
+                      Стоимость доставки: {order.deliveryCost.toLocaleString("ru-RU")} ₽ • Срок: {order.deliveryEta ?? "уточняется"}
+                    </p>
+                  ) : null}
+                  <p className="text-foreground font-medium mt-1">Итого: {order.total}</p>
+                </div>
               </div>
               <p className="text-sm text-foreground mt-3">Статус: В работе</p>
             </div>
@@ -741,7 +916,7 @@ export function TelegramBot() {
         return (
           <div className="flex flex-col h-full min-h-0">
             <div className="flex-1 p-4 overflow-auto min-h-0">
-              <h3 className="text-base font-semibold text-foreground">Заказ #{demoOrderId} отменён</h3>
+              <h3 className="text-base font-semibold text-foreground">Заказ #{activeOrder?.id ?? demoOrderId} отменён</h3>
               <div className="text-sm text-muted-foreground mt-3 space-y-1">
                 <p>Срок оплаты заказа истёк.</p>
                 <p>Заказ был автоматически отменён.</p>
@@ -766,18 +941,33 @@ export function TelegramBot() {
           <div className="flex flex-col h-full min-h-0">
             <div className="flex-1 p-4 overflow-auto min-h-0">
               <h3 className="text-base font-semibold text-foreground">Требуется уточнение</h3>
-              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{demoOrderId}</p>
+              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{activeOrder?.id ?? demoOrderId}</p>
               <p className="text-sm text-muted-foreground mb-4">
                 Оставлен комментарий к вашему заказу. Свяжитесь с нами для уточнения деталей.
               </p>
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
+              <div className="rounded-lg border border-border bg-muted/30 p-3 mb-4">
                 <p className="text-xs font-medium text-foreground mb-1">Комментарий к заказу:</p>
                 <p className="text-sm text-muted-foreground">{demoMasterComment}</p>
               </div>
+              {activeOrder && (
+                <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1 text-sm">
+                  <p className="font-medium text-foreground">Параметры заказа</p>
+                  <p className="text-muted-foreground">
+                    Доставка: СДЭК, ПВЗ: {activeOrder.pickupPointName ?? "уточняется"}
+                  </p>
+                  {activeOrder.pickupPointAddress && (
+                    <p className="text-xs text-muted-foreground">{activeOrder.pickupPointAddress}</p>
+                  )}
+                  <p className="text-muted-foreground">
+                    Стоимость доставки: {activeOrder.deliveryCost !== undefined ? `${activeOrder.deliveryCost.toLocaleString("ru-RU")} ₽` : "уточняется"} • Срок: {activeOrder.deliveryEta ?? "уточняется"}
+                  </p>
+                  <p className="text-foreground font-medium">Итого: {activeOrder.total}</p>
+                </div>
+              )}
             </div>
             <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
               <Button className="w-full h-11 rounded-lg" variant="outline" onClick={() => console.log("contact master")}>
-                Связаться с нами
+                Написать нам
               </Button>
               <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("main-menu")}>
                 Главное меню
@@ -791,7 +981,7 @@ export function TelegramBot() {
           <div className="flex flex-col h-full min-h-0">
             <div className="flex-1 p-4 overflow-auto min-h-0">
               <h3 className="text-base font-semibold text-foreground">Заказ в работе</h3>
-              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{demoOrderId}</p>
+              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{activeOrder?.id ?? demoOrderId}</p>
               <p className="text-sm text-muted-foreground">Ваш заказ принят в работу.</p>
             </div>
             <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
@@ -812,7 +1002,7 @@ export function TelegramBot() {
           <div className="flex flex-col h-full min-h-0">
             <div className="flex-1 p-4 overflow-auto min-h-0">
               <h3 className="text-base font-semibold text-foreground">Заказ отправлен</h3>
-              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{demoOrderId}</p>
+              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{activeOrder?.id ?? demoOrderId}</p>
               <p className="text-sm text-muted-foreground">Ваш заказ передан в доставку.</p>
             </div>
             <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
@@ -833,7 +1023,7 @@ export function TelegramBot() {
           <div className="flex flex-col h-full min-h-0">
             <div className="flex-1 p-4 overflow-auto min-h-0">
               <h3 className="text-base font-semibold text-foreground">Заказ отклонён</h3>
-              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{demoOrderId}</p>
+              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{activeOrder?.id ?? demoOrderId}</p>
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>К сожалению, мы не можем принять этот заказ.</p>
                 <p>Свяжитесь с нами для уточнения деталей или оформите новый заказ.</p>
@@ -841,7 +1031,7 @@ export function TelegramBot() {
             </div>
             <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
               <Button className="w-full h-11 rounded-lg" variant="outline" onClick={() => console.log("contact master")}>
-                Связаться с нами
+                Написать нам
               </Button>
               <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("main-menu")}>
                 Главное меню
@@ -910,15 +1100,19 @@ export function TelegramBot() {
                   <p className="font-medium text-foreground mb-1.5">Стоимость</p>
                   <div className="space-y-0.5">
                     <p className="text-foreground">Товары: {itemsTotalFormatted} ₽</p>
-                    <p className="text-foreground">Доставка: {order.delivery ?? "—"}</p>
+                    <p className="text-foreground">
+                      Доставка: {order.deliveryMethod ?? "СДЭК"}, ПВЗ: {order.pickupPointName ?? "уточняется"}
+                    </p>
+                    {(order.pickupPointAddress ?? order.addressLine2) ? (
+                      <p className="text-xs text-muted-foreground">{order.pickupPointAddress ?? order.addressLine2}</p>
+                    ) : null}
+                    <p className="text-foreground">
+                      Стоимость доставки: {order.deliveryCost !== undefined ? `${order.deliveryCost.toLocaleString("ru-RU")} ₽` : "уточняется"}
+                    </p>
+                    <p className="text-foreground">
+                      Срок доставки: {order.deliveryEta ?? "уточняется"}
+                    </p>
                     <p className="text-foreground font-medium">Итого: {order.total}</p>
-                  </div>
-                </div>
-                <div className="pt-1">
-                  <p className="font-medium text-foreground mb-0.5">Адрес доставки</p>
-                  <div className="text-muted-foreground space-y-0.5 leading-tight">
-                    <p>{order.address}</p>
-                    {order.addressLine2 && <p>{order.addressLine2}</p>}
                   </div>
                 </div>
               </div>
@@ -1038,11 +1232,16 @@ export function TelegramBot() {
       }
 
       case "checkout": {
-        const checkoutCartTotal = cartItems.reduce(
+        const checkoutItemsTotal = cartItems.reduce(
           (sum, pos) => sum + parsePrice(pos.product.price) * (pos.quantity ?? 1),
           0
         )
-        const checkoutTotalFormatted = checkoutCartTotal.toLocaleString("ru-RU")
+        const selectedCheckoutQuote =
+          checkoutPickupPointOptions.find((q) => q.pvz.id === checkoutPickupPointId) ?? null
+        const checkoutDeliveryCost = selectedCheckoutQuote?.cost ?? null
+        const checkoutTotal = checkoutItemsTotal + (checkoutDeliveryCost ?? 0)
+        const checkoutItemsTotalFormatted = checkoutItemsTotal.toLocaleString("ru-RU")
+        const checkoutTotalFormatted = checkoutTotal.toLocaleString("ru-RU")
         const renderOrderSummary = (compact?: boolean, showTotal = true) => (
           <div className="space-y-3">
             <p className="text-sm font-medium text-foreground">Ваш заказ</p>
@@ -1060,9 +1259,15 @@ export function TelegramBot() {
               )
             })}
             {showTotal && (
-              <p className="text-base font-bold text-foreground pt-2 border-t border-border">
-                Итого: {checkoutTotalFormatted} ₽
-              </p>
+              <>
+                <p className="text-xs text-muted-foreground pt-1">
+                  Доставка:{" "}
+                  {checkoutDeliveryCost !== null ? `${checkoutDeliveryCost.toLocaleString("ru-RU")} ₽ • ${selectedCheckoutQuote?.eta ?? "—"}` : "—"}
+                </p>
+                <p className="text-base font-bold text-foreground pt-2 border-t border-border">
+                  Итого: {checkoutTotalFormatted} ₽
+                </p>
+              </>
             )}
           </div>
         )
@@ -1141,32 +1346,71 @@ export function TelegramBot() {
                   className="h-11 rounded-lg"
                 />
               </div>
+
               <div className="space-y-2">
-                <Label className="text-sm">Адрес доставки</Label>
-                <Input
-                  placeholder="Улица, дом, квартира"
-                  value={checkoutAddress}
-                  onChange={(e) => setCheckoutAddress(e.target.value)}
-                  className="h-11 rounded-lg"
-                />
+                <Label className="text-sm">ПВЗ</Label>
+                {checkoutPickupPointOptions.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Введите город, чтобы показать доступные ПВЗ и ставки СДЭК.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {checkoutPickupPointOptions.map((opt) => {
+                      const selected = checkoutPickupPointId === opt.pvz.id
+                      return (
+                        <Button
+                          key={opt.pvz.id}
+                          type="button"
+                          variant={selected ? "default" : "outline"}
+                          className={[
+                            "w-full h-auto rounded-lg justify-start px-3 py-3",
+                            selected ? "ring-2 ring-primary/30" : "",
+                          ].join(" ")}
+                          onClick={() => {
+                            setCheckoutPickupPointId(opt.pvz.id)
+                            setCheckoutDeliveryError("")
+                          }}
+                        >
+                          <div className="flex items-start justify-between gap-3 w-full">
+                            <div className="flex flex-col items-start gap-1">
+                              <p className="text-sm font-medium text-foreground">{opt.pvz.name}</p>
+                              <p className="text-xs text-muted-foreground">{opt.pvz.address}</p>
+                              <p className="text-xs text-foreground">
+                                {opt.cost.toLocaleString("ru-RU")} ₽ • {opt.eta}
+                              </p>
+                            </div>
+                            <div
+                              aria-hidden
+                              className={[
+                                "mt-0.5 shrink-0 w-6 h-6 rounded-md flex items-center justify-center border",
+                                selected ? "bg-primary/10 border-primary/50 text-primary" : "bg-background border-border",
+                              ].join(" ")}
+                            >
+                              {selected ? <Check className="size-4" /> : null}
+                            </div>
+                          </div>
+                        </Button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {checkoutDeliveryError ? (
+                  <p className="text-xs text-red-600 pt-1">{checkoutDeliveryError}</p>
+                ) : null}
               </div>
-              <div className="space-y-2">
-                <Label className="text-sm text-muted-foreground">Комментарий к заказу (необязательно)</Label>
-                <Input
-                  placeholder="Комментарий"
-                  value={checkoutComment}
-                  onChange={(e) => setCheckoutComment(e.target.value)}
-                  className="h-11 rounded-lg"
-                />
-              </div>
-              <p className="text-xs text-muted-foreground pt-1">
-                Стоимость доставки рассчитывается после оформления заказа.
-                <br />
-                Обычно около 400–600 ₽ в зависимости от города.
-              </p>
             </div>,
             <>
-              <Button className="w-full h-11 rounded-lg" onClick={() => setCheckoutStep(4)}>
+              <Button
+                className={[
+                  "w-full h-11 rounded-lg transition-colors",
+                  !checkoutPickupPointId ? "bg-muted text-muted-foreground hover:bg-muted" : "",
+                ].join(" ")}
+                disabled={!checkoutPickupPointId}
+                onClick={() => {
+                  setCheckoutStep(4)
+                }}
+              >
                 Продолжить
               </Button>
               <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setCheckoutStep(2)}>
@@ -1181,19 +1425,31 @@ export function TelegramBot() {
             <div className="space-y-4">
               <div className="rounded-lg border border-border bg-muted/30 p-3">{renderOrderSummary(true, false)}</div>
               <div className="text-sm space-y-1 pt-2 border-t border-border">
-                <p className="text-foreground">Имя — {checkoutName || "—"}</p>
-                <p className="text-foreground">Телефон — {checkoutPhone || "—"}</p>
+                <p className="text-foreground">Имя — {checkoutName || "Имя не указано"}</p>
+                <p className="text-foreground">Телефон — {checkoutPhone || "Телефон не указан"}</p>
                 <p className="text-foreground">Город — {checkoutCity || "—"}</p>
-                <p className="text-foreground">Адрес — {checkoutAddress || "—"}</p>
                 {checkoutComment ? <p className="text-foreground">Комментарий — {checkoutComment}</p> : null}
               </div>
               <div className="pt-2 border-t border-border space-y-1">
                 <p className="text-base font-bold text-foreground">
-                  Товары: {checkoutTotalFormatted} ₽
+                  Товары: {checkoutItemsTotalFormatted} ₽
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  Доставка: рассчитывается отдельно
-                </p>
+                <div className="space-y-0.5 text-sm">
+                  <p className="text-foreground">
+                    Доставка: СДЭК, ПВЗ: {selectedCheckoutQuote?.pvz.name || "—"}
+                  </p>
+                  {selectedCheckoutQuote?.pvz.address ? (
+                    <p className="text-muted-foreground">{selectedCheckoutQuote.pvz.address}</p>
+                  ) : null}
+                  <p className="text-foreground">
+                    Срок доставки: {selectedCheckoutQuote?.eta ?? "—"}
+                  </p>
+                  <p className="text-foreground">
+                    Стоимость доставки:{" "}
+                    {checkoutDeliveryCost !== null ? `${checkoutDeliveryCost.toLocaleString("ru-RU")} ₽` : "—"}
+                  </p>
+                </div>
+                <p className="text-base font-bold text-foreground pt-1">Итого: {checkoutTotalFormatted} ₽</p>
               </div>
             </div>,
             <>
@@ -1210,20 +1466,72 @@ export function TelegramBot() {
               <Button className="w-full h-11 rounded-lg" onClick={submitCheckoutOrder}>
                 Подтвердить заказ
               </Button>
-              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setCheckoutStep(3)}>
-                Назад
+              <Button
+                variant="outline"
+                className="w-full h-11 rounded-lg"
+                onClick={() => setCheckoutStep(3)}
+              >
+                Изменить ПВЗ
               </Button>
             </>
           )
         }
         return checkoutLayout(
           "Заказ принят",
-          <div className="space-y-3 text-sm text-muted-foreground">
-            <p>Заказ передан на подтверждение.</p>
-            <p>После подтверждения с вами свяжутся для уточнения деталей и оплаты.</p>
-            <p className="text-xs">Стоимость доставки будет рассчитана после обработки заказа.</p>
-            <p className="text-xs">Обычно это занимает до одного рабочего дня.</p>
-          </div>,
+          (() => {
+            const order = activeOrder
+            if (!order) {
+              return (
+                <div className="space-y-3 text-sm text-muted-foreground">
+                  <p>Заказ передан на подтверждение.</p>
+                  <p className="text-xs">Нет данных о заказе.</p>
+                </div>
+              )
+            }
+
+            const pvzName = order.pickupPointName ?? "—"
+            const pvzAddress = order.pickupPointAddress ?? order.addressLine2 ?? order.address ?? "—"
+            const deliveryCost = order.deliveryCost
+            const deliveryEta = order.deliveryEta
+
+            const itemsTotal = order.items
+              .reduce((sum, it) => sum + parsePrice(it.price) * it.quantity, 0)
+              .toLocaleString("ru-RU")
+
+            return (
+              <div className="space-y-4 text-sm text-muted-foreground">
+                <div className="space-y-1">
+                  <p>Заказ передан на подтверждение.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">Товары</p>
+                  <div className="space-y-1">
+                    {order.items.map((it, i) => (
+                      <p key={i} className="text-muted-foreground">
+                        {it.name} ×{it.quantity} — {it.price}
+                      </p>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Стоимость товаров: {itemsTotal} ₽</p>
+                </div>
+
+                <div className="space-y-1 rounded-lg border border-border bg-muted/20 p-3">
+                  <p className="text-sm text-foreground">
+                    Доставка: СДЭК, ПВЗ: {pvzName}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{pvzAddress}</p>
+                  <p className="text-sm text-foreground">Срок доставки: {deliveryEta ?? "уточняется"}</p>
+                  <p className="text-sm text-foreground">
+                    Стоимость доставки:{" "}
+                    {deliveryCost !== undefined ? `${deliveryCost.toLocaleString("ru-RU")} ₽` : "уточняется"}
+                  </p>
+                </div>
+
+                <p className="text-base font-bold text-foreground">Итого: {order.total}</p>
+              </div>
+            )
+          })(),
           <>
             <Button className="w-full h-11 rounded-lg" onClick={resetCheckoutAndReturn}>
               Продолжить покупки
