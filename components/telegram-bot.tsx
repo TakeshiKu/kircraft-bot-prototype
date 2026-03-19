@@ -40,7 +40,6 @@ type Screen =
   | "checkout"
   | "post-order-demo"
   | "post-order-new"
-  | "post-order-awaiting-payment"
   | "post-order-clarification"
   | "post-order-in-progress"
   | "post-order-shipped"
@@ -105,7 +104,6 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
   IN_PRODUCTION: "Заказ в работе",
   SHIPPED: "Заказ отправлен",
   CANCELLED: "Заказ отменен",
-  "Ожидает оплаты": "Ожидает оплаты",
 }
 
 function getOrderStatusLabel(status: string): string {
@@ -190,6 +188,8 @@ export function TelegramBot() {
   const [checkoutStep, setCheckoutStep] = useState(1)
   const [checkoutName, setCheckoutName] = useState("")
   const [checkoutPhone, setCheckoutPhone] = useState("")
+  const [checkoutEmail, setCheckoutEmail] = useState("")
+  const [checkoutEmailError, setCheckoutEmailError] = useState("")
   const [checkoutCity, setCheckoutCity] = useState("")
   const [checkoutPickupPointId, setCheckoutPickupPointId] = useState("")
   const [checkoutPickupPointOptions, setCheckoutPickupPointOptions] = useState<CdekPickupPointQuote[]>([])
@@ -205,7 +205,7 @@ export function TelegramBot() {
     const step = params.get("checkoutStep")
     if (step) {
       const stepNum = parseInt(step, 10)
-      if (stepNum >= 1 && stepNum <= 5) {
+      if (stepNum >= 1 && stepNum <= 3) {
         setScreen("checkout")
         setCheckoutStep(stepNum)
       }
@@ -302,7 +302,7 @@ export function TelegramBot() {
     const selectedQuote = checkoutPickupPointOptions.find((q) => q.pvz.id === checkoutPickupPointId) ?? null
     if (!selectedQuote) {
       setCheckoutDeliveryError("Выберите ПВЗ.")
-      setCheckoutStep(3)
+      setCheckoutStep(2)
       return
     }
 
@@ -314,7 +314,7 @@ export function TelegramBot() {
 
     setActiveOrder({
       id: demoOrderId,
-      status: "Ожидает оплаты",
+      status: "PAID",
       items: cartItems.map((pos) => ({
         name: pos.product.name,
         price: pos.product.price,
@@ -333,18 +333,7 @@ export function TelegramBot() {
     })
 
     setCartItems([])
-    setScreen("post-order-awaiting-payment")
-  }
-  const resetCheckoutAndReturn = () => {
-    setCheckoutStep(1)
-    setCheckoutName("")
-    setCheckoutPhone("")
-    setCheckoutCity("")
-    setCheckoutPickupPointId("")
-    setCheckoutPickupPointOptions([])
-    setCheckoutDeliveryError("")
-    setCheckoutComment("")
-    setScreen("main-menu")
+    setScreen("post-order-payment-received")
   }
   const removeCartItem = (index: number) => {
     setCartItems((prev) => prev.filter((_, i) => i !== index))
@@ -486,15 +475,15 @@ export function TelegramBot() {
                   className="w-full h-11 justify-start rounded-lg"
                   onClick={() => {
                     if (activeOrder) {
-                      setActiveOrder({ ...activeOrder, status: "Ожидает оплаты" })
-                      setScreen("post-order-awaiting-payment")
+                      setActiveOrder({ ...activeOrder, status: "PAID" })
+                      setScreen("post-order-payment-received")
                       return
                     }
                     const demoQuote = mockCdekGetPickupPointsAndQuotes("Москва")[0]
                     if (!demoQuote) return
                     setActiveOrder({
                       id: demoOrderId,
-                      status: "Ожидает оплаты",
+                      status: "PAID",
                       items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
                       total: `${(8900 + demoQuote.cost).toLocaleString("ru-RU")} ₽`,
                       delivery: `${demoQuote.cost.toLocaleString("ru-RU")} ₽, срок ${demoQuote.eta}`,
@@ -507,10 +496,10 @@ export function TelegramBot() {
                       addressLine2: demoQuote.pvz.address,
                       date: "14 марта 2026",
                     })
-                    setScreen("post-order-awaiting-payment")
+                    setScreen("post-order-payment-received")
                   }}
                 >
-                  Ожидает оплаты
+                  Перейти к оплате
                 </Button>
                 <Button variant="outline" className="w-full h-11 justify-start rounded-lg" onClick={() => setScreen("post-order-clarification")}>
                   Требуется уточнение
@@ -616,6 +605,9 @@ export function TelegramBot() {
         const demoDeliveryEta = demoQuote?.eta ?? "уточняется"
         const demoPvzName = demoQuote?.pvz.name ?? "уточняется"
         const demoPvzAddress = demoQuote?.pvz.address ?? "уточняется"
+        const snapshotName = checkoutName.trim()
+        const snapshotPhone = checkoutPhone.trim()
+        const snapshotEmail = checkoutEmail.trim()
         const itemsTotal = 13400
         const demoItems: ActiveOrderItem[] = [
           { name: "Классический бумажник", price: "8 900 ₽", quantity: 1 },
@@ -634,14 +626,19 @@ export function TelegramBot() {
               <h3 className="text-base font-semibold text-foreground">Новый заказ</h3>
               <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{demoOrderId}</p>
               <div className="space-y-3 text-sm">
-                <p className="text-foreground font-medium">Иван Петров</p>
-                <p className="text-muted-foreground">Телефон — +7 999 123-45-67</p>
+                {(snapshotName || snapshotPhone || snapshotEmail) ? (
+                  <div className="space-y-0.5">
+                    <p className="text-foreground font-medium">Контакты</p>
+                    {snapshotName ? <p className="text-muted-foreground">Имя — {snapshotName}</p> : null}
+                    {snapshotPhone ? <p className="text-muted-foreground">Телефон — {snapshotPhone}</p> : null}
+                    {snapshotEmail ? <p className="text-muted-foreground">Email — {snapshotEmail}</p> : null}
+                  </div>
+                ) : null}
                 <p className="text-muted-foreground">Город — Москва</p>
-                <p className="text-muted-foreground">ПВЗ — {pvzName}</p>
+                <p className="text-muted-foreground">Доставка: СДЭК, ПВЗ: {pvzName}</p>
                 <p className="text-muted-foreground text-xs">{pvzAddress}</p>
-                <p className="text-muted-foreground">
-                  Доставка: {deliveryCost.toLocaleString("ru-RU")} ₽ • {deliveryEta}
-                </p>
+                <p className="text-muted-foreground">Стоимость доставки: {deliveryCost.toLocaleString("ru-RU")} ₽</p>
+                <p className="text-muted-foreground">Срок доставки: {deliveryEta}</p>
                 <p className="text-muted-foreground">Комментарий — Позвонить перед доставкой</p>
               </div>
               <div className="mt-4 pt-3 border-t border-border space-y-2 text-sm">
@@ -660,7 +657,7 @@ export function TelegramBot() {
                 onClick={() => {
                   setActiveOrder({
                     id: demoOrderId,
-                    status: "Ожидает оплаты",
+                    status: "PAID",
                     items: orderItems,
                     total,
                     delivery: `${deliveryCost.toLocaleString("ru-RU")} ₽, срок ${deliveryEta}`,
@@ -673,7 +670,7 @@ export function TelegramBot() {
                     addressLine2: pvzAddress,
                     date: "14 марта 2026",
                   })
-                  setScreen("post-order-awaiting-payment")
+                  setScreen("post-order-payment-received")
                 }}
               >
                 Подтвердить заказ
@@ -686,58 +683,6 @@ export function TelegramBot() {
               </Button>
               <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("post-order-demo")}>
                 Назад
-              </Button>
-            </div>
-          </div>
-        )
-      }
-
-      case "post-order-awaiting-payment": {
-        const goToPayment = () => {
-          if (activeOrder) {
-            setActiveOrder({ ...activeOrder, status: "PAID" })
-            setScreen("post-order-payment-received")
-            return
-          }
-
-          const demoQuote = mockCdekGetPickupPointsAndQuotes("Москва")[0]
-          if (!demoQuote) return
-
-          setActiveOrder({
-            id: demoOrderId,
-            status: "PAID",
-            items: [{ name: "Классический бумажник", price: "8 900 ₽", quantity: 1 }],
-            total: `${(8900 + demoQuote.cost).toLocaleString("ru-RU")} ₽`,
-            delivery: `${demoQuote.cost.toLocaleString("ru-RU")} ₽, срок ${demoQuote.eta}`,
-            deliveryCost: demoQuote.cost,
-            deliveryEta: demoQuote.eta,
-            deliveryMethod: "СДЭК",
-            pickupPointName: demoQuote.pvz.name,
-            pickupPointAddress: demoQuote.pvz.address,
-            address: "Москва",
-            addressLine2: demoQuote.pvz.address,
-            date: "14 марта 2026",
-          })
-          setScreen("post-order-payment-received")
-        }
-
-        const orderId = activeOrder?.id ?? demoOrderId
-        const total = activeOrder?.total ?? "—"
-        return (
-          <div className="flex flex-col h-full min-h-0">
-            <div className="flex-1 p-4 overflow-auto min-h-0">
-              <h3 className="text-base font-semibold text-foreground">Ожидает оплаты</h3>
-              <p className="text-xs text-muted-foreground mt-1 mb-4">Заказ #{orderId}</p>
-              <div className="space-y-3 text-sm text-muted-foreground">
-                <p className="text-foreground font-medium">Итого: {total}</p>
-              </div>
-            </div>
-            <div className="p-4 pt-2 flex flex-col gap-2 shrink-0 border-t border-border">
-              <Button className="w-full h-11 rounded-lg" onClick={goToPayment}>
-                Перейти к оплате
-              </Button>
-              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("order-cancel-confirm")}>
-                Отменить заказ
               </Button>
             </div>
           </div>
@@ -763,7 +708,7 @@ export function TelegramBot() {
               >
                 Отменить заказ
               </Button>
-              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("post-order-awaiting-payment")}>
+              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("post-order-demo")}>
                 Вернуться
               </Button>
             </div>
@@ -776,6 +721,9 @@ export function TelegramBot() {
         const safeCost = demoQuote?.cost ?? 0
         const safePvzName = demoQuote?.pvz.name ?? "ПВЗ СДЭК"
         const safePvzAddress = demoQuote?.pvz.address ?? "г. Москва, адрес ПВЗ"
+        const snapshotName = checkoutName.trim()
+        const snapshotPhone = checkoutPhone.trim()
+        const snapshotEmail = checkoutEmail.trim()
         const order =
           activeOrder?.status === "PAID"
             ? activeOrder
@@ -801,6 +749,16 @@ export function TelegramBot() {
               {order.date && <p className="text-xs text-muted-foreground mt-1 mb-3">Дата заказа: {order.date}</p>}
               <p className="text-sm text-foreground mb-3">Статус: Оплачен</p>
               <div className="space-y-2 text-sm border-t border-border pt-3">
+                {(snapshotName || snapshotPhone || snapshotEmail) ? (
+                  <div>
+                    <p className="font-medium text-foreground mb-1">Контакты</p>
+                    <div className="text-muted-foreground space-y-0.5">
+                      {snapshotName ? <p>Имя — {snapshotName}</p> : null}
+                      {snapshotPhone ? <p>Телефон — {snapshotPhone}</p> : null}
+                      {snapshotEmail ? <p>Email — {snapshotEmail}</p> : null}
+                    </div>
+                  </div>
+                ) : null}
                 <div>
                   <p className="font-medium text-foreground mb-1">Состав заказа</p>
                   <ul className="text-muted-foreground space-y-0.5 list-none pl-0">
@@ -848,6 +806,9 @@ export function TelegramBot() {
         const safeCost = demoQuote?.cost ?? 0
         const safePvzName = demoQuote?.pvz.name ?? "ПВЗ СДЭК"
         const safePvzAddress = demoQuote?.pvz.address ?? "г. Москва, адрес ПВЗ"
+        const snapshotName = checkoutName.trim()
+        const snapshotPhone = checkoutPhone.trim()
+        const snapshotEmail = checkoutEmail.trim()
         const order = activeOrder ?? {
           id: demoOrderId,
           status: "IN_PRODUCTION",
@@ -869,6 +830,16 @@ export function TelegramBot() {
               <h3 className="text-base font-semibold text-foreground">Заказ в работе</h3>
               <p className="text-xs text-muted-foreground mt-1 mb-2">Заказ #{order.id}</p>
               <div className="space-y-2 text-sm border-t border-border pt-3">
+                {(snapshotName || snapshotPhone || snapshotEmail) ? (
+                  <div>
+                    <p className="font-medium text-foreground mb-0.5">Контакты</p>
+                    <div className="text-muted-foreground space-y-0.5">
+                      {snapshotName ? <p>Имя — {snapshotName}</p> : null}
+                      {snapshotPhone ? <p>Телефон — {snapshotPhone}</p> : null}
+                      {snapshotEmail ? <p>Email — {snapshotEmail}</p> : null}
+                    </div>
+                  </div>
+                ) : null}
                 <div>
                   <p className="font-medium text-foreground mb-0.5">Состав заказа</p>
                   <ul className="text-muted-foreground space-y-0.5">
@@ -1242,6 +1213,21 @@ export function TelegramBot() {
         const checkoutTotal = checkoutItemsTotal + (checkoutDeliveryCost ?? 0)
         const checkoutItemsTotalFormatted = checkoutItemsTotal.toLocaleString("ru-RU")
         const checkoutTotalFormatted = checkoutTotal.toLocaleString("ru-RU")
+        const checkoutNameTrimmed = checkoutName.trim()
+        const checkoutPhoneTrimmed = checkoutPhone.trim()
+        const checkoutEmailTrimmed = checkoutEmail.trim()
+        const checkoutContactLines = [
+          checkoutNameTrimmed ? `Имя — ${checkoutNameTrimmed}` : null,
+          checkoutPhoneTrimmed ? `Телефон — ${checkoutPhoneTrimmed}` : null,
+          checkoutEmailTrimmed ? `Email — ${checkoutEmailTrimmed}` : null,
+        ].filter((line): line is string => line !== null)
+        const normalizedCheckoutCity = checkoutCity.trim()
+        const isValidCheckoutCityForSummary = /^[A-Za-zА-Яа-яЁё -]{3,}$/.test(normalizedCheckoutCity)
+        const formatPickupPointLabel = (name?: string) => {
+          if (!name) return "СДЭК, ПВЗ: —"
+          const normalizedName = name.replace(/^ПВЗ\s*[:\-]?\s*/i, "").trim()
+          return `СДЭК, ПВЗ: ${normalizedName || name}`
+        }
         const renderOrderSummary = (compact?: boolean, showTotal = true) => (
           <div className="space-y-3">
             <p className="text-sm font-medium text-foreground">Ваш заказ</p>
@@ -1284,20 +1270,6 @@ export function TelegramBot() {
         )
         if (checkoutStep === 1) {
           return checkoutLayout(
-            "Оформление заказа",
-            <div className="rounded-lg border border-border bg-muted/30 p-3">{renderOrderSummary()}</div>,
-            <>
-              <Button className="w-full h-11 rounded-lg" onClick={() => setCheckoutStep(2)}>
-                Продолжить
-              </Button>
-              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("cart")}>
-                Назад в корзину
-              </Button>
-            </>
-          )
-        }
-        if (checkoutStep === 2) {
-          return checkoutLayout(
             "Контактные данные",
             <div className="space-y-4">
               <div className="space-y-2">
@@ -1308,6 +1280,28 @@ export function TelegramBot() {
                   onChange={(e) => setCheckoutName(e.target.value)}
                   className="h-11 rounded-lg"
                 />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm">Email (необязательно)</Label>
+                <Input
+                  type="email"
+                  placeholder="name@example.com"
+                  value={checkoutEmail}
+                  onChange={(e) => {
+                    const nextValue = e.target.value
+                    setCheckoutEmail(nextValue)
+                    if (!nextValue) {
+                      setCheckoutEmailError("")
+                      return
+                    }
+                    const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextValue)
+                    setCheckoutEmailError(isValid ? "" : "Проверьте формат email.")
+                  }}
+                  className="h-11 rounded-lg"
+                />
+                {checkoutEmailError ? (
+                  <p className="text-xs text-red-600">{checkoutEmailError}</p>
+                ) : null}
               </div>
               <div className="space-y-2">
                 <Label className="text-sm">Телефон</Label>
@@ -1324,19 +1318,31 @@ export function TelegramBot() {
               </div>
             </div>,
             <>
-              <Button className="w-full h-11 rounded-lg" onClick={() => setCheckoutStep(3)}>
+              <Button className="w-full h-11 rounded-lg" onClick={() => setCheckoutStep(2)}>
                 Продолжить
               </Button>
-              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setCheckoutStep(1)}>
-                Назад
+              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("cart")}>
+                Назад в корзину
               </Button>
             </>
           )
         }
-        if (checkoutStep === 3) {
+        if (checkoutStep === 2) {
           return checkoutLayout(
             "Доставка",
             <div className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-sm">Способ доставки</Label>
+                <div className="rounded-lg border border-border bg-muted/20 p-3">
+                  <div className="flex items-center gap-2 text-sm text-foreground">
+                    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-primary">
+                      <span className="h-2 w-2 rounded-full bg-primary" />
+                    </span>
+                    <span>СДЭК — пункт выдачи</span>
+                  </div>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label className="text-sm">Город</Label>
                 <Input
@@ -1348,12 +1354,8 @@ export function TelegramBot() {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-sm">ПВЗ</Label>
-                {checkoutPickupPointOptions.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    Введите город, чтобы показать доступные ПВЗ и ставки СДЭК.
-                  </p>
-                ) : (
+                <Label className="text-sm">Пункты выдачи (ПВЗ)</Label>
+                {checkoutPickupPointOptions.length > 0 ? (
                   <div className="space-y-2">
                     {checkoutPickupPointOptions.map((opt) => {
                       const selected = checkoutPickupPointId === opt.pvz.id
@@ -1393,7 +1395,7 @@ export function TelegramBot() {
                       )
                     })}
                   </div>
-                )}
+                ) : null}
 
                 {checkoutDeliveryError ? (
                   <p className="text-xs text-red-600 pt-1">{checkoutDeliveryError}</p>
@@ -1408,35 +1410,43 @@ export function TelegramBot() {
                 ].join(" ")}
                 disabled={!checkoutPickupPointId}
                 onClick={() => {
-                  setCheckoutStep(4)
+                  setCheckoutStep(3)
                 }}
               >
                 Продолжить
               </Button>
-              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setCheckoutStep(2)}>
+              <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setCheckoutStep(1)}>
                 Назад
               </Button>
             </>
           )
         }
-        if (checkoutStep === 4) {
+        if (checkoutStep === 3) {
           return checkoutLayout(
             "Подтверждение заказа",
             <div className="space-y-4">
               <div className="rounded-lg border border-border bg-muted/30 p-3">{renderOrderSummary(true, false)}</div>
-              <div className="text-sm space-y-1 pt-2 border-t border-border">
-                <p className="text-foreground">Имя — {checkoutName || "Имя не указано"}</p>
-                <p className="text-foreground">Телефон — {checkoutPhone || "Телефон не указан"}</p>
-                <p className="text-foreground">Город — {checkoutCity || "—"}</p>
-                {checkoutComment ? <p className="text-foreground">Комментарий — {checkoutComment}</p> : null}
-              </div>
+              {checkoutContactLines.length > 0 ? (
+                <div className="text-sm space-y-1 pt-2 border-t border-border">
+                  <p className="text-foreground font-medium">Контакты:</p>
+                  {checkoutContactLines.map((line) => (
+                    <p key={line} className="text-foreground">{line}</p>
+                  ))}
+                </div>
+              ) : null}
+              {(isValidCheckoutCityForSummary || checkoutComment) ? (
+                <div className="text-sm space-y-1 pt-2 border-t border-border">
+                  {isValidCheckoutCityForSummary ? <p className="text-foreground">Город — {normalizedCheckoutCity}</p> : null}
+                  {checkoutComment ? <p className="text-foreground">Комментарий — {checkoutComment}</p> : null}
+                </div>
+              ) : null}
               <div className="pt-2 border-t border-border space-y-1">
                 <p className="text-base font-bold text-foreground">
                   Товары: {checkoutItemsTotalFormatted} ₽
                 </p>
                 <div className="space-y-0.5 text-sm">
                   <p className="text-foreground">
-                    Доставка: СДЭК, ПВЗ: {selectedCheckoutQuote?.pvz.name || "—"}
+                    Доставка: {formatPickupPointLabel(selectedCheckoutQuote?.pvz.name)}
                   </p>
                   {selectedCheckoutQuote?.pvz.address ? (
                     <p className="text-muted-foreground">{selectedCheckoutQuote.pvz.address}</p>
@@ -1456,7 +1466,7 @@ export function TelegramBot() {
               <p className="text-xs text-muted-foreground">
                 Подтверждая заказ, вы соглашаетесь с обработкой персональных данных в соответствии с{" "}
                 <a
-                  href={`/privacy-policy?returnTo=${encodeURIComponent("/?checkoutStep=4")}`}
+                  href={`/privacy-policy?returnTo=${encodeURIComponent("/?checkoutStep=3")}`}
                   className="underline underline-offset-2 text-primary hover:text-primary/90"
                 >
                   Политикой обработки персональных данных
@@ -1464,12 +1474,16 @@ export function TelegramBot() {
                 .
               </p>
               <Button className="w-full h-11 rounded-lg" onClick={submitCheckoutOrder}>
-                Подтвердить заказ
+                Перейти к оплате
               </Button>
               <Button
                 variant="outline"
                 className="w-full h-11 rounded-lg"
-                onClick={() => setCheckoutStep(3)}
+                onClick={() => {
+                  setCheckoutPickupPointId("")
+                  setCheckoutDeliveryError("")
+                  setCheckoutStep(2)
+                }}
               >
                 Изменить ПВЗ
               </Button>
@@ -1477,67 +1491,14 @@ export function TelegramBot() {
           )
         }
         return checkoutLayout(
-          "Заказ принят",
-          (() => {
-            const order = activeOrder
-            if (!order) {
-              return (
-                <div className="space-y-3 text-sm text-muted-foreground">
-                  <p>Заказ передан на подтверждение.</p>
-                  <p className="text-xs">Нет данных о заказе.</p>
-                </div>
-              )
-            }
-
-            const pvzName = order.pickupPointName ?? "—"
-            const pvzAddress = order.pickupPointAddress ?? order.addressLine2 ?? order.address ?? "—"
-            const deliveryCost = order.deliveryCost
-            const deliveryEta = order.deliveryEta
-
-            const itemsTotal = order.items
-              .reduce((sum, it) => sum + parsePrice(it.price) * it.quantity, 0)
-              .toLocaleString("ru-RU")
-
-            return (
-              <div className="space-y-4 text-sm text-muted-foreground">
-                <div className="space-y-1">
-                  <p>Заказ передан на подтверждение.</p>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-foreground">Товары</p>
-                  <div className="space-y-1">
-                    {order.items.map((it, i) => (
-                      <p key={i} className="text-muted-foreground">
-                        {it.name} ×{it.quantity} — {it.price}
-                      </p>
-                    ))}
-                  </div>
-                  <p className="text-xs text-muted-foreground">Стоимость товаров: {itemsTotal} ₽</p>
-                </div>
-
-                <div className="space-y-1 rounded-lg border border-border bg-muted/20 p-3">
-                  <p className="text-sm text-foreground">
-                    Доставка: СДЭК, ПВЗ: {pvzName}
-                  </p>
-                  <p className="text-xs text-muted-foreground">{pvzAddress}</p>
-                  <p className="text-sm text-foreground">Срок доставки: {deliveryEta ?? "уточняется"}</p>
-                  <p className="text-sm text-foreground">
-                    Стоимость доставки:{" "}
-                    {deliveryCost !== undefined ? `${deliveryCost.toLocaleString("ru-RU")} ₽` : "уточняется"}
-                  </p>
-                </div>
-
-                <p className="text-base font-bold text-foreground">Итого: {order.total}</p>
-              </div>
-            )
-          })(),
+          "Контактные данные",
+          <p className="text-sm text-muted-foreground">Продолжите оформление заказа.</p>,
           <>
-            <Button className="w-full h-11 rounded-lg" onClick={resetCheckoutAndReturn}>
-              Продолжить покупки
+            <Button className="w-full h-11 rounded-lg" onClick={() => setCheckoutStep(1)}>
+              К шагу контактов
             </Button>
-            <Button variant="outline" className="w-full h-11 rounded-lg" onClick={resetCheckoutAndReturn}>
-              Главное меню
+            <Button variant="outline" className="w-full h-11 rounded-lg" onClick={() => setScreen("cart")}>
+              Назад в корзину
             </Button>
           </>
         )
